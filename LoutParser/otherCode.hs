@@ -1,8 +1,4 @@
-import Control.Monad (sequence)
-
-import qualified Text.PrettyPrint as P
-
-import Prelude
+import Prelude hiding (null)
 
 infixr 6 #
 
@@ -27,6 +23,7 @@ instance Show Object where
           ++ "Delayed Targets: " ++ (show $ delayedTargets obj)
           ++ "Object Height: "   ++ (show $ height obj)
 
+
 type RcvResult = (Bool, [Galley], Object)
 targets o = openTargets o ++ delayedTargets o
 data EvalResult = Disappearing
@@ -35,30 +32,25 @@ data EvalResult = Disappearing
                 | Sending   {gall :: [Galley],  obj :: Object}
                 | Yielding  {comp :: Component, obj :: Object}
 type Constraint = Maybe Int
-force :: Object -> [Component]
-force o = case eval o True Nothing of
+
+force :: Object -> [Component] force o = case 
+eval o True Nothing of
   Disappearing  -> []
   Yielding c o' -> c : force o'
   Sending gs o' -> force o'
-nul :: Object
-nul = Object
- {eval = (\ forcing co -> Disappearing)
- ,receive = (\ forcing co g -> rcverror g "nul")
- ,openTargets = []
- ,delayedTargets = []
- ,height = 0
- }
-singleton :: Component -> Object
-singleton c = o where
- o = Object
-  {eval = (\ forcing co -> if co &? c then Yielding c nul else NoSpace o)
+null :: Object
+null = Object
+ {eval = (\ forcing co -> Disappearing)  ,receive = (\ forcing co g -> 
+rcverror g "null")  ,openTargets = []  ,delayedTargets = []  ,height = 
+0  } singleton :: Component -> Object singleton c = o where  o = 
+Object
+  {eval = (\ forcing co -> if co &? c then Yielding c null else NoSpace o)
   ,receive = (\ forcing co g -> rcverror g "singleton")
   ,openTargets = [], delayedTargets = []
   ,height = length c
   }
-prefix :: Component -> Object -> Object
-prefix c o = o' where
- o' = Object
+prefix :: Component -> Object -> Object prefix c o = o' where  o' = 
+Object
   {eval =  (\ forcing co -> if co &? c then Yielding c o else NoSpace o')
   ,receive = (\ forcing co g ->
                 thrdUpd3 (prefix c) $ receive o forcing (co &- c) g)
@@ -70,14 +62,13 @@ thrdUpd3 :: (c -> d) -> (a, b, c) -> (a, b, d)
 thrdUpd3 f (a, b, c) = (a, b, f c)
 galley :: Galley -> Object
 galley g = Object
-  {eval    = (\ forcing co -> Sending [g] nul)
+  {eval    = (\ forcing co -> Sending [g] null)
   ,receive = (\ forcing co g' -> rcverror g' "galley")
   ,openTargets = [],  delayedTargets = []
   ,height = 0
   }
-suffix :: Component -> Object -> Object
-suffix c o = o' where
- o' = Object
+suffix :: Component -> Object -> Object suffix c o = o' where  o' = 
+Object
   {eval = (\ forcing co -> case eval o forcing (co &- c) of
                   Disappearing -> eval (singleton c) forcing co
                   r -> r {obj = suffix c (obj r)})
@@ -90,25 +81,25 @@ suffix c o = o' where
 type OCState = (Bool, Object, Object)
 type STfun s x = s -> (s,x)
 type SToc = STfun OCState [Galley]
-ocMkResult :: (OCState,[Galley]) -> RcvResult
-ocMkResult ((rcv, o1, o2), gs) = (rcv, gs, o1 # o2)
-ocGalleyFrom1, ocGalleyFrom2 :: Bool -> Constraint -> Galley -> SToc
+ocMkResult :: (OCState,[Galley]) -> RcvResult ocMkResult ((rcv, o1, 
+o2), gs) = (rcv, gs, o1 # o2) ocGalleyFrom1, ocGalleyFrom2 :: Bool -> 
+Constraint -> Galley -> SToc
 ocGalleyFrom1 forcing co g @ (name,Preceding,_) s = (s, [g])
 ocGalleyFrom1 forcing co g @ (name,Following,_) s @ (rcv, o1, o2) =
   if name `notElem` targets o2 then (s,[g])
   else let (rcv', gs2, o2') = receive o2 True (co &- o1) g
        in ocGalleysFrom2 forcing co gs2 (rcv || rcv', o1, o2')
 ocGalleyFrom2 forcing co g @ (name,Following,_) s = (s, [g])
-ocGalleyFrom2 forcing co g @ (name,Preceding,_) s @ (rcv, o1, o2) =
- if name `notElem` targets o1 then (s,[g])
- else let (rcv', gs1, o1') = receive o1 forcing (co &- o2) g
-      in ocGalleysFrom1 forcing co gs1 (rcv || rcv', o1', o2)
-stfold :: (a -> STfun b [c]) -> [a] -> STfun b [c]
+ocGalleyFrom2 forcing co g @ (name,Preceding,_) s @ (rcv, o1, o2) =  
+if name `notElem` targets o1 then (s,[g])  else let (rcv', gs1, o1') = 
+receive o1 forcing (co &- o2) g
+      in ocGalleysFrom1 forcing co gs1 (rcv || rcv', o1', o2) stfold 
+:: (a -> STfun b [c]) -> [a] -> STfun b [c]
 stfold f []     s = (s,[])
 stfold f (g:gs) s = let (s' , gs' ) = f g s
                         (s'', gs'') = stfold f gs s'
-                    in (s'', gs' ++ gs'')
-ocGalleysFrom1, ocGalleysFrom2 :: Bool -> Constraint -> [Galley] -> SToc
+                    in (s'', gs' ++ gs'') ocGalleysFrom1, 
+ocGalleysFrom2 :: Bool -> Constraint -> [Galley] -> SToc
 ocGalleysFrom1 forcing co = stfold (ocGalleyFrom1 forcing co)
 ocGalleysFrom2 forcing co = stfold (ocGalleyFrom2 forcing co)
 (#) :: Object -> Object -> Object
@@ -131,8 +122,8 @@ o1 # o2 = o where
   ,delayedTargets = delayedTargets o1 ++ delayedTargets o2
   ,height = height o1 + height o2
   }
-ocEval :: Object -> Object -> Bool -> Constraint -> EvalResult
-ocEval o1 o2 forcing co = case eval o1 False (co &- o2) of
+ocEval :: Object -> Object -> Bool -> Constraint -> EvalResult ocEval 
+o1 o2 forcing co = case eval o1 False (co &- o2) of
   Disappearing -> eval o2 forcing co
   NoSpace o1' -> NoSpace (o1' # o2)
   Yielding c o1' -> Yielding c (o1' # o2)
@@ -155,8 +146,8 @@ fill h c = take h (c ++ repeat "")
 high :: Int -> Object -> Object
 high h o = o' where
  eval' forcing = case eval o forcing (Just h) of
-   NoSpace o1 -> Yielding (fill h ["@High: Object too large"]) nul
-   Disappearing -> Yielding (strut h) nul
+   NoSpace o1 -> Yielding (fill h ["@High: Object too large"]) null
+   Disappearing -> Yielding (strut h) null
    Suspended o1 -> Suspended (high h o1)
    Sending gs o1 -> Sending gs (high h o1)
    Yielding c o1 -> let h' = h - length c in
@@ -166,8 +157,7 @@ high h o = o' where
        Sending gs o2 -> Sending gs (prefixConc c o2)
        Suspended o2 -> Suspended (prefixConc c o2)
        NoSpace o2 -> error "@High: NoSpace in recursive call!"
-       Disappearing -> Yielding (fill h c) nul
- o'= Object
+       Disappearing -> Yielding (fill h c) null  o'= Object
   {eval = (\ forcing co -> case co of
                Nothing -> eval' forcing
                Just h' -> if h' < h then NoSpace o' else eval' forcing)
@@ -177,11 +167,10 @@ high h o = o' where
   ,delayedTargets = delayedTargets o
   ,height = h
   }
-prefixConc :: Component -> Object -> Object
-prefixConc c o = o' where
- o' = Object
+prefixConc :: Component -> Object -> Object prefixConc c o = o' where  
+o' = Object
   {eval = (\ forcing co -> case eval o forcing (co &- c) of
-    Disappearing -> Yielding c nul
+    Disappearing -> Yielding c null
     Yielding c' o2 -> Yielding (c ++ c') o2
     r -> r {obj = prefixConc c (obj r)})
   ,receive = (\ forcing co g -> if co &? c
@@ -191,20 +180,18 @@ prefixConc c o = o' where
   ,height = length c + height o
   }
 forward :: Galley -> Galley
-forward (name,d,o) = (name,Following,o)
-attach :: String -> Object -> Object
-attach name = attach' where
- attach' o = o' where
+forward (name,d,o) = (name,Following,o) attach :: String -> Object -> 
+Object attach name = attach' where  attach' o = o' where
   o'= Object
    {eval = (\ forcing co -> case eval o forcing Nothing of
        Disappearing -> Disappearing
        NoSpace o1 -> error "attach: NoSpace without constraints!"
        Suspended o1 -> if isEmpty co
-                       then Sending [(name,Following,attach' o1)] nul
+                       then Sending [(name,Following,attach' o1)] null
                        else Suspended (attach' o1)
        Sending gs o1 -> Sending gs (attach' o1)
        Yielding c o1 -> if co &? c then Yielding c (attach' o1)
-                 else Sending [(name,Following,attach' (prefix c o1))] nul)
+                 else Sending [(name,Following,attach' (prefix c o1))] null)
    ,receive = (\ forcing co g -> thrdUpd3 attach' $ receive o forcing co g)
    ,openTargets = openTargets o
    ,delayedTargets = delayedTargets o
@@ -228,25 +215,23 @@ target name = o where
              let g' = (name',Following,o'')
                  (rcv, gs1, o1) = receive (prefix c o) forcing co g'
              in (True, gs1, o1)
-           else (False, [(name,Following,prefix c o'')], nul))
+           else (False, [(name,Following,prefix c o'')], null))
   ,openTargets = [name]
   ,delayedTargets = []
   ,height = 0
   }
-recurse :: (Object -> Object) -> Object
-recurse ff = o
- where
+recurse :: (Object -> Object) -> Object recurse ff = o  where
   ffo = ff o
-  ff0 = ff nul
+  ff0 = ff null
   targs = targets ff0
   o = Object
    {eval = (\ forcing co -> if forcing || isEmpty co || not (co &? ffo)
                             then Disappearing else Suspended o)
    ,receive = (\ forcing co g @ (name,d,o') -> case co of
-        Just 0 -> (False, [forward g], nul)
+        Just 0 -> (False, [forward g], null)
         _ -> if name `elem` targs
              then case receive ff0 forcing co g of
-                   (False, gs, o1) -> (False, [forward g], nul)
+                   (False, gs, o1) -> (False, [forward g], null)
                    r -> receive ffo forcing co g
              else rcverror g "recurse")
    ,openTargets = []
@@ -259,10 +244,10 @@ delay o = o' where
   {eval = (\ forcing co -> if forcing || isEmpty co || not (co &? o)
                       then Disappearing else Suspended o')
   ,receive = (\ forcing co g @ (name,d,o') -> case co of
-        Just 0 -> (False, [forward g], nul)
+        Just 0 -> (False, [forward g], null)
         _ -> if name `elem` targs
              then case receive o forcing co g of
-               (False, gs, o1) -> (False, [forward g], nul)
+               (False, gs, o1) -> (False, [forward g], null)
                r -> r
              else rcverror g "delay")
   ,openTargets = []
@@ -277,7 +262,7 @@ vExpand o = o' where
     Nothing ->     eval o forcing co
     Just 0 ->      eval o forcing co
     Just h -> case eval o forcing co of
-      Disappearing -> Yielding (strut h) nul
+      Disappearing -> Yielding (strut h) null
       NoSpace o1 -> NoSpace o1
       Sending gs o1 -> Sending gs (vExpand o1)
       Suspended o1 -> Suspended (vExpand o1)
@@ -287,23 +272,22 @@ vExpand o = o' where
   ,delayedTargets = delayedTargets o
   ,height = height o
   }
-recurseF :: ((a -> Object) -> (a -> Object)) -> (a -> Object)
-recurseF ff = f
- where
+recurseF :: ((a -> Object) -> (a -> Object)) -> (a -> Object) recurseF 
+ff = f  where
   f' = ff f
   f a = o where
    ffo = f' a
-   ff0 = ff (const nul) a
+   ff0 = ff (const null) a
    targs = targets ff0
    o = Object -- { as before }
      {eval = (\ f co -> if f || isEmpty co || not (co &? ffo)
                         then Disappearing
                         else Suspended o)
      ,receive = (\ forcing co g @ (name,d,o') -> case co of
-        Just 0 -> (False, [forward g], nul)
+        Just 0 -> (False, [forward g], null)
         _ -> if name `elem` targs
              then case receive ff0 forcing co g of
-               (False, gs, o1) -> (False, [forward g], nul)
+               (False, gs, o1) -> (False, [forward g], null)
                r -> receive ffo forcing co g
              else rcverror g "Frecurse")
      ,openTargets = []
@@ -313,15 +297,12 @@ recurseF ff = f
 npage :: Int -> Object
 npage n = high 14 $ prefix ["          - " ++ show n ++ "-",""]
                            (vExpand (target "TextPlace") # footSect)
-
 npageList :: Object
 npageList = let f mkpl n = npage n # mkpl (n+1)
             in recurseF f 1
 displayObject n wid o = putStr $ unlines $ frame n wid $ force o
-
 frame n wid [] = []
-frame n wid cs = overline (f cs1) ++ frame n wid cs2
- where
+frame n wid cs = overline (f cs1) ++ frame n wid cs2  where
   (cs1,cs2) = splitAt n cs
   l2 s = l1 s ++ "|"
   l1 s = '|' : take wid (s ++ repeat ' ')
@@ -332,14 +313,11 @@ frame n wid cs = overline (f cs1) ++ frame n wid cs2
   f [] = []
   f [c] = p2 c
   f (c : cs) = zipWith (++) (p1 c) (f cs)
-  overline l @ (s : ss) = replicate (length s) '-' : l
-printObject :: Object -> IO ()
-printObject = putStr . string_of_Object True
+  overline l @ (s : ss) = replicate (length s) '-' : l printObject :: 
+Object -> IO () printObject = putStr . string_of_Object True 
 printObject' = putStr . string_of_Object False
-
-string_of_Object :: Bool -> Object -> String
-string_of_Object forcing = f 10 [] where
- f 0 gs o = "<<<Terminating.>>>\n"
+string_of_Object :: Bool -> Object -> String string_of_Object forcing 
+= f 10 [] where  f 0 gs o = "<<<Terminating.>>>\n"
  f n gs o = let
    printstray gs = unlines ("===================="
                             :map string_of_stray_galley gs
@@ -370,60 +348,47 @@ string_of_Object forcing = f 10 [] where
         NoSpace o' ->
             "<<<NoSpace --- continuing>>>\n" ++ f n gs o'
         Yielding c o' -> string_of_Component c ++ f n gs o'
-
 string_of_stray_galley (name,d,o) =
       "No target for galley `" ++ name ++ "&&" ++ show d ++
       "; h=" ++ show (height o) ++ "\n" ++
       string_of_Object True o ++
       "~~~~~~~~~~ end of galley `" ++ name ++ "&&" ++ show d ++ "\n"
 string_of_Component c =
-   unlines (map ('|':) c ++ ["--------------------"])
-isEmpty :: Constraint -> Bool
-isEmpty Nothing = False
-isEmpty (Just 0) = True
+   unlines (map ('|':) c ++ ["--------------------"]) isEmpty :: 
+Constraint -> Bool isEmpty Nothing = False isEmpty (Just 0) = True 
 isEmpty _ = False
-
 class Constrainer c where
  cHeight :: c -> Int
 
-(&-) :: Constrainer c => Constraint -> c -> Constraint
-Nothing &- c = Nothing
+(&-) :: Constrainer c => Constraint -> c -> Constraint Nothing &- c = 
+Nothing
 (Just h) &- c | h' < 0     =  Just 0
               | otherwise  =  Just h'
   where h' = h - cHeight c
 
-(&?) :: Constrainer c => Constraint -> c -> Bool
-Nothing &? c = True
+(&?) :: Constrainer c => Constraint -> c -> Bool Nothing &? c = True 
 (Just h) &? c = h >= cHeight c
-
 instance Constrainer Int where
  cHeight n = n
 instance Constrainer Object where
  cHeight o = height o
-instance Constrainer c => Constrainer (Maybe c) where
- cHeight Nothing = 0
- cHeight (Just o) = cHeight o
-
+instance Constrainer c => Constrainer (Maybe c) where  cHeight Nothing 
+= 0  cHeight (Just o) = cHeight o
 class IsChar c where ischar :: c
 instance IsChar Char where ischar = '?'
-
 class IsString s where isstring :: s
 instance IsChar a => IsString [a] where isstring = [ischar]
-
 instance IsString a => Constrainer [a] where -- Component only!
  cHeight c = length c
-rcverror g s = error ("Cannot receive: " ++ s ++ "\n" ++ show g)
-blom n = singleton ["("++ show n ++ ") Blom, Eric. Some"
+rcverror g s = error ("Cannot receive: " ++ s ++ "\n" ++ show g) blom 
+n = singleton ["("++ show n ++ ") Blom, Eric. Some"
                    ,"Great Composers."
                    ,"Oxford, 1944."]
-
 heading n = prefix ["PURCELL("++ show n ++ ")"] $ footNote (blom n)
-
 purcell = heading 1 # body
+body = foldr prefix null bodycs
 
-body = foldr prefix nul bodycs
-
-body2 = foldr prefix nul (bodycs ++ bodycs)
+body2 = foldr prefix null (bodycs ++ bodycs)
 
 bodycs =
  [[""]
@@ -452,60 +417,24 @@ bodycs =
 example = pageList # text purcell
 nexample = npageList # text purcell
 h2a = heading 1 # heading 2
-
 conc o1 o2 = o1 # o2
 h3a = conc (heading 1)
-         (conc (heading 2) (heading 3))
-h3'npl = conc npageList (text h3a)
-bp = conc npageList (text (conc (conc (blom 1) body) purcell))
-bh = conc npageList (text (conc (blom 1)
+         (conc (heading 2) (heading 3)) h3'npl = conc npageList (text 
+h3a) bp = conc npageList (text (conc (conc (blom 1) body) purcell)) bh 
+= conc npageList (text (conc (blom 1)
         (conc body (heading 2))))
-pg' n = high n $ conc (vExpand (target "TextPlace")) footsect
-pg n = high n $ conc (target "TextPlace") footsect
-pgList' n = recurse (conc (pg' n))
-pgList n = recurse (conc (pg n))
-doc n o = conc (pgList n) (text o)
-doc' n o = conc (pgList' n) (text o)
-footsect = delay $ (prefix ["", "-----"] footList)
-vfill = recurse (prefix ["|"])
-f2 = conc (blom 1) (footNote (conc (blom 2) (blom 3)))
-f2a = conc (blom 1) (conc (footNote (conc (blom 2) (blom 3))) (blom 4))
-fn n = footNote (prefix ['(' : show n ++ ") This is a"]
+pg' n = high n $ conc (vExpand (target "TextPlace")) footsect pg n = 
+high n $ conc (target "TextPlace") footsect pgList' n = recurse (conc 
+(pg' n)) pgList n = recurse (conc (pg n)) doc n o = conc (pgList n) 
+(text o) doc' n o = conc (pgList' n) (text o) footsect = delay $ 
+(prefix ["", "-----"] footList) vfill = recurse (prefix ["|"])
+f2 = conc (blom 1) (footNote (conc (blom 2) (blom 3))) f2a = conc 
+(blom 1) (conc (footNote (conc (blom 2) (blom 3))) (blom 4)) fn n = 
+footNote (prefix ['(' : show n ++ ") This is a"]
+                 (singleton ["long footnote."])) fn' n = footNote 
+(conc (singleton ['(' : show n ++ ") This is a"])
                  (singleton ["long footnote."]))
-fn' n = footNote (conc (singleton ['(' : show n ++ ") This is a"])
-                 (singleton ["long footnote."]))
-fn2 = conc (singleton ["Text"]) (fn 1)
-fn2' = conc (singleton ["Text"]) (fn' 1)
-fns = doc 8 (blom 1 # fn2)
-fns' = doc 8 (blom 1 # fn2 # blom 2)
-ps = doc 17 (purcell # purcell)
+fn2 = conc (singleton ["Text"]) (fn 1) fn2' = conc (singleton 
+["Text"]) (fn' 1) fns = doc 8 (blom 1 # fn2) fns' = doc 8 (blom 1 # 
+fn2 # blom 2) ps = doc 17 (purcell # purcell)
 
-
-
-
-
-
-
-------------------------------------------------------------------------
-fooPrint = map (map putStrLn) . force
-
-exPrint = sequence . concat $ fooPrint example
-
-main = do putStrLn ""
-          let res = force example
-          putStr $ renderComp res
-
-render = P.render
-type Doc = P.Doc
--- shxt = P.text . show
-vcat = P.vcat
-hcat = P.hcat
-
-
-renderComp compList = render . P.fsep $ docCompList
-  where
-    docCompList = P.punctuate (P.text "\n\n") docCompList'
-    docCompList' = map prettyComponent compList
-
-prettyComponent :: Component -> Doc
-prettyComponent cmp = vcat $ map P.text cmp

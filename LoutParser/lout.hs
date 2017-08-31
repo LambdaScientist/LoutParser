@@ -1,17 +1,155 @@
 {-# LANGUAGE NoMonomorphismRestriction, FlexibleContexts #-}
-import Prelude
+import Prelude 
 import Text.Parsec
 import Text.Parsec.String
--- letter
--- white space quote escape comment other
--- @ab-zAB-Z_
--- space formfeed tab newline
--- "
--- \
--- # !$%&’()*+,-./0123456789:;<=>?[]^‘{|}~
 
--- When the comment character # is encountered, everything from that point to the end of the line is ignored.
+import Control.Monad
 
+-- import qualified GalleyCode as GC
+
+-------------------------------------------------------------------
+-- General
+parseInt :: Parser String
+parseInt = plus <|> minus <|> number
+  where plus   = char '+' *> number
+        minus  = (:) <$> char '-' <*> number
+        number = many1 digit
+
+parseDouble :: Parser String
+parseDouble = (++) <$> decimal <*> parseInt
+  where decimal = ((++) <$> parseInt <*> string "." ) 
+              <|> return ""
+-------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+-- The 23 primitive operators of Lout, in order of increasing precedence.
+------------------------------------------------------------------------------
+-- object / gap object               Vertical concatenation with mark alignment
+-- object // gap object              Vertical concatenation with left justification
+-- object | gap object               Horizontal concatenation with mark alignment
+-- object || gap object              Horizontal concatenation with top-justification
+-- object & gap object               Horizontal concatenation within paragraphs
+-- @OneCol object                    Hide all but one column mark of object
+-- @OneRow object                    Hide all but one row mark of object
+-- font @Font object                 Render object in nominated font
+-- breakstyle @Break object          Break paragraphs of object in nominated style
+-- spacestyle @Space object          Render spaces between words in nominated style
+-- length @Wide object               Render object to width length
+-- length @High object               Render object to height length
+-- @HExpand object                   Expand horizontal gaps to fill available space
+-- @VExpand object                   Expand vertical gaps to fill available space
+-- @HScale object                    Horizontal geometrical scaling to fill available space
+-- @VScale object                    Vertical geometrical scaling to fill available space
+-- angle @Rotate object              Rotate object by angle
+-- PostScript @Graphic object        Escape to graphics language
+-- @Next object                      Add 1 to an object denoting a number
+-- object @Case alternatives         Select from a set of alternative objects
+-- identifier && object              Cross reference
+-- cross-reference @Open object      Retrieve value from cross reference
+-- cross-reference @Tagged object    Attach cross referencing tag to object
+
+data LoutPrim = LP Gap
+  deriving (Show)
+
+type Component = String -- [String]
+
+
+data ItemW = W { wContents :: [String]
+               }
+data ItemH = H { hContents :: [ItemW]
+               }
+
+
+-- |0.2ie produces a 0.2 inches measured from edge to edge; 
+-- |0.3ix produces a 0.3 inch gap measured from mark to mark 
+--        MAYBE widened to prevent overstriking
+-- |2.5it places its right parameter 2.5 inches from the current left margin, 
+--        irrespective of the position of the left parameter. There is also a 
+--        choice of eleven units of measurement (inches, centimetres, multiples 
+--        of the current font size, etc.)
+-- | r unit: one r is the column width minus the width of the following object, so that 
+-- * |1rt produces sufficient space to right justify the following object
+-- * |0.5rt to center it. 
+data Unit = I | IE | IX | IT | R | RT
+  deriving (Show)
+data GapArg = GA Double Unit | DefUnit Unit | DefaultValue
+  deriving (Show)
+
+-- object / gap object               Vertical concatenation with mark alignment
+-- object // gap object              Vertical concatenation with left justification
+-- object | gap object               Horizontal concatenation with mark alignment
+-- object || gap object              Horizontal concatenation with top-justification
+-- object & gap object               Horizontal concatenation within paragraphs
+data Gap = VMark GapArg -- Object Object
+         | VLeft GapArg -- Object Object
+         | HMark GapArg -- Object Object
+         | HTop  GapArg -- Object Object
+         | HPara GapArg -- Object Object
+         deriving (Show)
+
+parseGapArg :: Parser GapArg
+parseGapArg = GA <$> (rd <$> parseDouble) <*> parseUnit
+          <|> DefUnit <$> parseUnitR
+          <|> return DefaultValue
+  where rd = read :: String -> Double
+
+parseUnitR :: Parser Unit
+parseUnitR = string "r" *> return R
+
+parseUnit :: Parser Unit
+parseUnit = choice 
+          [ string "i"  *> return I
+          , string "ie" *> return IE
+          , string "ix" *> return IX
+          , string "it" *> return IT
+          , parseUnitR 
+          , string "rt" *> return RT
+          ]
+
+-- object / gap object               Vertical concatenation with mark alignment
+-- object // gap object              Vertical concatenation with left justification
+-- object | gap object               Horizontal concatenation with mark alignment
+-- object || gap object              Horizontal concatenation with top-justification
+-- object & gap object               Horizontal concatenation within paragraphs
+parseGapOp :: Parser Gap -- (Object -> Object -> Gap)
+-- This fuction take advantage of partial succeeding parsers ==> Order matters on like symbols
+parseGapOp = choice 
+           [ 
+             char '&' *> (HPara <$> parseGapArg)
+           , char '|' *> (char '|' *> (HMark <$> parseGapArg)
+                     <|> (HTop <$> parseGapArg))
+           , char '/' *> (char '/' *> (VLeft <$> parseGapArg)
+                     <|> (VMark <$> parseGapArg))
+           ]
+
+parseObject :: Parser Object
+parseObject = pSeqObj
+
+--Not finished
+parseObject' :: Parser Object
+parseObject' = choice 
+             [ --loutExpression,
+               pNestObj
+             , (PosLit <$> loutIdent)
+             ] >>= loutInfixHalfExpression 
+
+pNestObj :: Parser Object
+pNestObj = char '{' *> pSeqObj <* char '}'
+
+pSeqObj :: Parser Object
+pSeqObj = SeqObj <$> many1 (parseObject' <* spaces)
+      <|> return EmptyObj
+
+loutIdent :: Parser TextInput
+loutIdent = loutIdentCharSeq <|> loutIdentString
+
+data TextInput = Unanalyzed String
+               | Identifier String
+               | LiteralWord String 
+               | Symbol String
+               deriving (Show)
+
+type Operator = Gap
 -- object
 -- → object infixop object 
 -- → prefixop object
@@ -21,14 +159,6 @@ import Text.Parsec.String
 -- → { object }
 -- → object object 
 -- →
-
-data TextInput = Unanalyzed String
-                 | Identifier String
-                 | LiteralWord String 
-                 | Symbol String
-                 deriving (Show)
-
-type Operator = TextInput
 data Object = 
   -- where infixop, prefixop, postfixop, and noparsop are identifiers naming 
   -- operators which take 0, 1 or 2 parameters, as shown, and literalword is 
@@ -41,16 +171,84 @@ data Object =
   -- a sequence of non-space characters, or an arbitrary sequence of characters enclosed in double quotes.
   | PosLit TextInput
   --sequences of arbitrary objects separated by white space, called paragraphs.
-  | SequencesOp [Object]
+  | SeqObj [Object] 
   -- allows a meaning for expressions such as {}, in which an object is missing. The value of 
   -- this empty object is a rectangle of size 0 by 0, with one column mark and one row mark, that prints as nothing.
-  | EmptyOp
+  | EmptyObj
   deriving (Show)
 
--- loutIdent ::Parsec String String Identity
-loutIdent = many1 (letter <|> char '@') >>= return . Unanalyzed
 
-pSymbol = many1 (oneOf "!@$%&’*+,-./:;<=>?^‘|~") >>= return . Symbol
+
+loutExpression :: Parser Object
+loutExpression = parseObject' -- >>= loutInfixHalfExpression --add other expression types
+loutInfixHalfExpression :: Object -> Parser Object
+loutInfixHalfExpression obj = do spaces
+                                 gapFun <- parseGapOp 
+                                 spaces
+                                 rightObj <- parseObject'
+                                 return $ InfixOp obj gapFun rightObj
+                          <|> return obj
+
+
+
+loutInfixExpression :: Parser Object
+loutInfixExpression = do leftObj <- parseObject'
+                         spaces
+                         gapFun <- parseGapOp 
+                         spaces
+                         rightObj <- parseObject'
+                         return $ InfixOp leftObj gapFun rightObj
+loutPostExpression :: Parser Object
+loutPostExpression = undefined
+loutPrefixExpression :: Parser Object
+loutPrefixExpression = undefined
+
+
+
+
+
+testFile = "/home/burhopja/Documents/burhopSrc/Joy/joy-hs/LoutParser/ex.txt"
+-- foo = do result <- parseFromFile parseObject testFile 
+foo = do result <- parseFromFile loutExpression testFile 
+         putStrLn $ "Reading from: " ++ testFile
+         putStrLn $ "\nResult: \n"
+         print result
+
+
+
+
+
+
+
+escape :: Parser String
+escape = do
+    d <- char '\\'
+    c <- oneOf "\\\"0rvbf" -- all the characters which can be escaped
+    return [d, c]
+
+nonEscape :: Parser Char
+nonEscape = noneOf "\\\"\0\r\v\b\f"
+
+character :: Parser String
+character = fmap return nonEscape <|> escape
+
+-- A sequence of characters which is neither a white space,
+-- an identifier, nor a delimiter, is by default a literal 
+-- word, which means that it will pass through Lout unchanged. 
+-- An arbitrary sequence of characters enclosed in double quotes, 
+-- for example "{ }", is also a literal word.
+-- Space characters may be included, but not tabs or newlines.
+loutIdentString = do
+    s <- char '"'
+    strings <- many character
+    end <- char '"'
+    return.Unanalyzed $ s:(concat strings)++[end]
+                    
+loutIdentCharSeq = many1 (letter <|> char '@') 
+               >>= return . Unanalyzed
+
+pSymbol = many1 (oneOf "!@$%&’*+,-./:;<=>?^‘|~") 
+      >>= return . Symbol
 
 pTextInput = (try pSymbol <|> loutIdent ) 
 pPosLit = PosLit <$> pTextInput
@@ -59,23 +257,28 @@ comment = do char '#'
              manyTill anyChar endOfLine 
              return ()
 
-pLoutFile = many $ (many comment *> pObject)
+-- pLoutFile = many $ (many comment *> pObject)
 
-pObject = pInfix
-      <|> pPosLit
-      <|> return EmptyOp 
+-- pObject = try pInfix
+--       <|> pPosLit
+--       <|> return EmptyObj 
 
 -- pInfix :: Parsec Object
-pInfix = do left <- pObject 
-            infixop <- pTextInput
-            right <- pObject
-            return $ InfixOp left infixop right
+-- pInfix = do left <- pObject 
+--             infixop <- pTextInput
+--             right <- pObject
+--             return $ InfixOp left infixop right
 
-testFile = "/home/burhopja/Documents/burhopSrc/Joy/joy-hs/LoutParser/ex.txt"
-foo = do result <- parseFromFile pPosLit testFile 
-         putStrLn $ "Reading from: " ++ testFile
-         putStrLn $ "\nResult: \n"
-         print result
+-- letter
+-- white space quote escape comment other
+-- @ab-zAB-Z_
+-- space formfeed tab newline
+-- "
+-- \
+-- # !$%&’()*+,-./0123456789:;<=>?[]^‘{|}~
+
+-- When the comment character # is encountered, everything from that point to the end of the line is ignored.
+
 
 -- If objects are to be constructed like mathematical expressions, the natural 
 -- notation is a func- tional language based on operators, as in Eqn. The 
